@@ -11,7 +11,7 @@
 use clap::builder::NonEmptyStringValueParser;
 use clap::error::ErrorKind::MissingRequiredArgument;
 use clap::value_parser;
-use yuv::color::MatrixCoefficients;
+use yuv::YuvStandardMatrix;
 use gifski::{Repeat, Settings};
 use std::io::stdin;
 use std::io::BufRead;
@@ -184,7 +184,7 @@ fn bin_main() -> BinResult<()> {
                         .arg(Arg::new("y4m-color-override")
                             .long("y4m-color-override")
                             .help("The color space of the input YUV4MPEG2 video\n\
-                                   Possible values: bt709 fcc bt470bg bt601 smpte240 ycgco\n\
+                                   Possible values: bt709 fcc bt470bg bt601 bt2020 smpte240\n\
                                    Defaults to bt709 for HD and bt601 for SD resolutions")
                             .num_args(1)
                             .hide_short_help(true)
@@ -231,7 +231,7 @@ fn bin_main() -> BinResult<()> {
     let speed: f32 = matches.get_one::<f32>("fast-forward").copied().ok_or("?")?;
     let fixed_colors = matches.get_many::<Vec<rgb::RGB8>>("fixed-color");
     let matte = matches.get_one::<rgb::RGB8>("matte");
-    let in_color_space = matches.get_one::<MatrixCoefficients>("y4m-color-override").copied();
+    let in_color_space = matches.get_one::<YuvStandardMatrix>("y4m-color-override").copied();
 
     let rate = source::Fps { fps, speed };
 
@@ -454,16 +454,16 @@ fn color_parser() {
     assert!(parse_colors("#12345").is_err());
 }
 
-fn parse_color_space(value: &str) -> Result<MatrixCoefficients, String> {
+fn parse_color_space(value: &str) -> Result<YuvStandardMatrix, String> {
     let value = value.to_lowercase();
     let value = value.trim();
     let matrix = match value {
-        "bt709" => MatrixCoefficients::BT709,
-        "fcc" => MatrixCoefficients::FCC,
-        "bt470bg" => MatrixCoefficients::BT470BG,
-        "bt601" => MatrixCoefficients::BT601,
-        "smpte240" => MatrixCoefficients::SMPTE240,
-        "ycgco" => MatrixCoefficients::YCgCo,
+        "bt709" => YuvStandardMatrix::Bt709,
+        "fcc" => YuvStandardMatrix::Fcc,
+        "bt470bg" => YuvStandardMatrix::Bt470_6,
+        "bt601" => YuvStandardMatrix::Bt601,
+        "bt2020" => YuvStandardMatrix::Bt2020,
+        "smpte240" => YuvStandardMatrix::Smpte240,
         _ => return Err("unsupported color space".into()),
     };
     Ok(matrix)
@@ -578,7 +578,7 @@ impl fmt::Display for DestPath<'_> {
 }
 
 #[cfg(feature = "video")]
-fn get_video_decoder(ftype: FileType, src: SrcPath, fps: source::Fps, in_color_space: Option<MatrixCoefficients>, settings: Settings) -> BinResult<Box<dyn Source>> {
+fn get_video_decoder(ftype: FileType, src: SrcPath, fps: source::Fps, in_color_space: Option<YuvStandardMatrix>, settings: Settings) -> BinResult<Box<dyn Source>> {
     Ok(if ftype == FileType::Y4M {
         Box::new(y4m_source::Y4MDecoder::new(src, fps, in_color_space)?)
     } else {
@@ -588,7 +588,7 @@ fn get_video_decoder(ftype: FileType, src: SrcPath, fps: source::Fps, in_color_s
 
 #[cfg(not(feature = "video"))]
 #[cold]
-fn get_video_decoder(ftype: FileType, src: SrcPath, fps: source::Fps, in_color_space: Option<MatrixCoefficients>, _: Settings) -> BinResult<Box<dyn Source>> {
+fn get_video_decoder(ftype: FileType, src: SrcPath, fps: source::Fps, in_color_space: Option<YuvStandardMatrix>, _: Settings) -> BinResult<Box<dyn Source>> {
     if ftype == FileType::Y4M {
         Ok(Box::new(y4m_source::Y4MDecoder::new(src, fps, in_color_space)?))
     } else {

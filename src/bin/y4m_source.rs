@@ -3,21 +3,22 @@ use std::io::Read;
 use imgref::ImgVec;
 use gifski::Collector;
 use y4m::{Colorspace, Decoder, ParseError};
-use yuv::color::{MatrixCoefficients, Range};
-use yuv::convert::RGBConvert;
-use yuv::YUV;
+use yuv::{
+    yuv400_to_rgba, yuv420_to_rgba, yuv422_to_rgba, yuv444_to_rgba, YuvGrayImage, YuvPlanarImage,
+    YuvRange, YuvStandardMatrix,
+};
 use crate::{SrcPath, BinResult};
 use crate::source::{Fps, Source, DEFAULT_FPS};
 
 pub struct Y4MDecoder {
     fps: Fps,
-    in_color_space: Option<MatrixCoefficients>,
+    in_color_space: Option<YuvStandardMatrix>,
     decoder: Decoder<Box<BufReader<dyn Read>>>,
     file_size: Option<u64>,
 }
 
 impl Y4MDecoder {
-    pub fn new(src: SrcPath, fps: Fps, in_color_space: Option<MatrixCoefficients>) -> BinResult<Self> {
+    pub fn new(src: SrcPath, fps: Fps, in_color_space: Option<YuvStandardMatrix>) -> BinResult<Self> {
         let mut file_size = None;
         let reader = match src {
             SrcPath::Path(path) => {
@@ -96,31 +97,31 @@ impl Source for Y4MDecoder {
         let height = self.decoder.get_height();
         let raw_params_str = &*String::from_utf8_lossy(self.decoder.get_raw_params()).into_owned();
         let range = raw_params_str.split_once("COLORRANGE=").map(|(_, r)| {
-            if r.starts_with("FULL") { Range::Full } else { Range::Limited }
+            if r.starts_with("FULL") { YuvRange::Full } else { YuvRange::Limited }
         });
 
         let matrix = self.in_color_space.unwrap_or({
-            if height <= 480 && width <= 720 { MatrixCoefficients::BT601 } else { MatrixCoefficients::BT709 }
+            if height <= 480 && width <= 720 { YuvStandardMatrix::Bt601 } else { YuvStandardMatrix::Bt709 }
         });
+        let range = range.unwrap_or(YuvRange::Limited);
 
-        let (samp, conv) = match self.decoder.get_colorspace() {
-            Colorspace::Cmono => (Samp::Mono, RGBConvert::<u8>::new(range.unwrap_or(Range::Limited), MatrixCoefficients::Identity)),
+        let samp = match self.decoder.get_colorspace() {
+            Colorspace::Cmono => Samp::Mono,
             Colorspace::Cmono12 => return Err("Y4M with Cmono12 is not supported yet".into()),
-            Colorspace::C420 => (Samp::S2x2, RGBConvert::<u8>::new(range.unwrap_or(Range::Limited), matrix)),
+            Colorspace::C420 => Samp::S2x2,
             Colorspace::C420p10 => return Err("Y4M with C420p10 is not supported yet".into()),
             Colorspace::C420p12 => return Err("Y4M with C420p12 is not supported yet".into()),
-            Colorspace::C420jpeg => (Samp::S2x2, RGBConvert::<u8>::new(range.unwrap_or(Range::Limited), matrix)),
-            Colorspace::C420paldv => (Samp::S2x2, RGBConvert::<u8>::new(range.unwrap_or(Range::Limited), matrix)),
-            Colorspace::C420mpeg2 => (Samp::S2x2, RGBConvert::<u8>::new(range.unwrap_or(Range::Limited), matrix)),
-            Colorspace::C422 => (Samp::S2x1, RGBConvert::<u8>::new(range.unwrap_or(Range::Limited), matrix)),
+            Colorspace::C420jpeg => Samp::S2x2,
+            Colorspace::C420paldv => Samp::S2x2,
+            Colorspace::C420mpeg2 => Samp::S2x2,
+            Colorspace::C422 => Samp::S2x1,
             Colorspace::C422p10 => return Err("Y4M with C422p10 is not supported yet".into()),
             Colorspace::C422p12 => return Err("Y4M with C422p12 is not supported yet".into()),
-            Colorspace::C444 => (Samp::S1x1, RGBConvert::<u8>::new(range.unwrap_or(Range::Limited), matrix)),
+            Colorspace::C444 => Samp::S1x1,
             Colorspace::C444p10 => return Err("Y4M with C444p10 is not supported yet".into()),
             Colorspace::C444p12 => return Err("Y4M with C444p12 is not supported yet".into()),
             _ => return Err(format!("Y4M uses unsupported color mode {raw_params_str}").into()),
         };
-        let conv = conv?;
         if width == 0 || width > u16::MAX as _ || height == 0 || height > u16::MAX as _ {
             return Err("Video too large".into());
         }
@@ -149,64 +150,69 @@ impl Source for Y4MDecoder {
                     }
                     let u = frame.get_u_plane();
                     let v = frame.get_v_plane();
-                    if v.len() != u.len() {
-                        return bad_frame(raw_params_str);
-                    }
+                    let width_u32 = width as u32;
+                    let height_u32 = height as u32;
+                    let mut rgba = vec![0; width * height * 4];
 
-                    let mut out = Vec::new();
-                    out.try_reserve(width * height)?;
-                    match samp {
-                        Samp::Mono => todo!(),
+                    let res = match samp {
+                        Samp::Mono => {
+                            let img = YuvGrayImage {
+                                y_plane: y,
+                                y_stride: width_u32,
+                                width: width_u32,
+                                height: height_u32,
+                            };
+                            yuv400_to_rgba(&img, &mut rgba, width_u32 * 4, range, matrix)
+                        },
                         Samp::S1x1 => {
-                            if v.len() != y.len() {
-                                return bad_frame(raw_params_str);
-                            }
-
-                            let y = y.chunks_exact(width);
-                            let u = u.chunks_exact(width);
-                            let v = v.chunks_exact(width);
-                            if y.len() != v.len() {
-                                return bad_frame(raw_params_str);
-                            }
-                            for (y, (u, v)) in y.zip(u.zip(v)) {
-                                out.extend(
-                                    y.iter().copied().zip(u.iter().copied().zip(v.iter().copied()))
-                                    .map(|(y, (u, v))| {
-                                        conv.to_rgb(YUV {y, u, v}).with_alpha(255)
-                                    }));
-                            }
+                            let img = YuvPlanarImage {
+                                y_plane: y,
+                                y_stride: width_u32,
+                                u_plane: u,
+                                u_stride: width_u32,
+                                v_plane: v,
+                                v_stride: width_u32,
+                                width: width_u32,
+                                height: height_u32,
+                            };
+                            yuv444_to_rgba(&img, &mut rgba, width_u32 * 4, range, matrix)
                         },
                         Samp::S2x1 => {
-                            let y = y.chunks_exact(width);
-                            let u = u.chunks_exact(width.div_ceil(2));
-                            let v = v.chunks_exact(width.div_ceil(2));
-                            if y.len() != v.len() {
-                                return bad_frame(raw_params_str);
-                            }
-                            for (y, (u, v)) in y.zip(u.zip(v)) {
-                                let u = u.iter().copied().flat_map(|x| [x, x]);
-                                let v = v.iter().copied().flat_map(|x| [x, x]);
-                                out.extend(
-                                    y.iter().copied().zip(u.zip(v))
-                                    .map(|(y, (u, v))| {
-                                        conv.to_rgb(YUV {y, u, v}).with_alpha(255)
-                                    }));
-                            }
+                            let uv_stride = width_u32.div_ceil(2);
+                            let img = YuvPlanarImage {
+                                y_plane: y,
+                                y_stride: width_u32,
+                                u_plane: u,
+                                u_stride: uv_stride,
+                                v_plane: v,
+                                v_stride: uv_stride,
+                                width: width_u32,
+                                height: height_u32,
+                            };
+                            yuv422_to_rgba(&img, &mut rgba, width_u32 * 4, range, matrix)
                         },
                         Samp::S2x2 => {
-                            let y = y.chunks_exact(width);
-                            let u = u.chunks_exact(width.div_ceil(2)).flat_map(|r| [r, r]);
-                            let v = v.chunks_exact(width.div_ceil(2)).flat_map(|r| [r, r]);
-                            for (y, (u, v)) in y.zip(u.zip(v)) {
-                                let u = u.iter().copied().flat_map(|x| [x, x]);
-                                let v = v.iter().copied().flat_map(|x| [x, x]);
-                                out.extend(
-                                    y.iter().copied().zip(u.zip(v))
-                                    .map(|(y, (u, v))| {
-                                        conv.to_rgb(YUV {y, u, v}).with_alpha(255)
-                                    }));
-                            }
+                            let uv_stride = width_u32.div_ceil(2);
+                            let img = YuvPlanarImage {
+                                y_plane: y,
+                                y_stride: width_u32,
+                                u_plane: u,
+                                u_stride: uv_stride,
+                                v_plane: v,
+                                v_stride: uv_stride,
+                                width: width_u32,
+                                height: height_u32,
+                            };
+                            yuv420_to_rgba(&img, &mut rgba, width_u32 * 4, range, matrix)
                         },
+                    };
+                    if let Err(err) = res {
+                        return Err(format!("Bad Y4M frame (using {raw_params_str}): {err}").into());
+                    }
+
+                    let mut out = Vec::with_capacity(width * height);
+                    for px in rgba.chunks_exact(4) {
+                        out.push(rgb::RGBA8::new(px[0], px[1], px[2], px[3]));
                     }
                     if out.len() != width * height {
                         return bad_frame(raw_params_str);
