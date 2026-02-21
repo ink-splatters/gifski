@@ -76,6 +76,28 @@ If you need to make a GIF that fits a predefined file size, you have to experime
 2. Clone the repository: `git clone https://github.com/ImageOptim/gifski`
 3. In the cloned directory, run: `cargo build --release`. This will build in `./target/release`.
 
+### Benchmark Matrix
+
+To compare stable-compatible and nightly-SIMD performance on Y4M workloads, run:
+
+```sh
+scripts/bench-matrix.sh
+```
+
+Useful options:
+
+```sh
+scripts/bench-matrix.sh --reps 10 --width 1280 --height 720 --frames 300
+```
+
+On Apple Silicon, the script will also try x86_64 runs via Rosetta (if available).
+
+By default, builds use stable Rust. The nightly-only SIMD set is opt-in via:
+
+```sh
+cargo +nightly build --release --features nightly-simd
+```
+
 ### Using from C
 
 [See `gifski.h`](https://github.com/ImageOptim/gifski/blob/main/gifski.h) for [the C API](https://docs.rs/gifski/latest/gifski/c_api/#functions). To build the library, run:
@@ -151,4 +173,3 @@ cargo build --lib --release --target=aarch64-apple-ios
 The build may print "dropping unsupported crate type `cdylib`" warning. This is expected when building for iOS.
 
 This will create a static library in `./target/aarch64-apple-ios/release/libgifski.a`. You can add this library to your Xcode project. See [gifski.app](https://github.com/sindresorhus/Gifski) for an example how to use libgifski from Swift.
-

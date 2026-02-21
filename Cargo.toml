@@ -74,6 +74,7 @@ default = ["gifsicle", "binary"]
 binary = ["dep:clap", "dep:yuv", "dep:y4m", "png", "pbr", "dep:wild", "dep:natord", "dep:dunce"]
 capi = [] # internal for cargo-c only
 png = ["dep:lodepng"]
+nightly-simd = ["yuv/nightly_avx512", "yuv/nightly_i8mm", "yuv/nightly_f16"]
 # Links dynamically to ffmpeg. Needs ffmpeg devel package installed on the system.
 video = ["dep:ffmpeg"]
 # Builds ffmpeg from source. Needs a C compiler, and all of ffmpeg's source dependencies.

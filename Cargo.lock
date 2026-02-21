@@ -250,6 +250,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
+name = "fast_transpose"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87fd7bef897517e02c834586f88572f4e2f485d5e9c0bbd1f3497ed6b5a7f6e2"
+dependencies = [
+ "bytemuck",
+]
+
+[[package]]
 name = "ffmpeg-next"
 version = "8.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -833,6 +842,7 @@ version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59a0036e8395a36727d814d90c490872c580e29d69edccf6f00d956d9bca985c"
 dependencies = [
+ "fast_transpose",
  "num-traits",
 ]
 
